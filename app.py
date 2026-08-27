@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 from scanner import init_db, add_opportunity
-import PyPDF2
+#import PyPDF2
 
 st.set_page_config(page_title="IITJ MBA Opportunity Hub", layout="wide")
 init_db()
