@@ -84,4 +84,5 @@ with tab3:
     if not PDF_SUPPORT:
         st.error("Resume Analysis is offline. Please ensure 'PyPDF2' is in requirements.txt and wait for rebuild.")
     else:
-        st.write("Uplo
+        st.write("Upload your resume to see which open case competitions match your skills.")
+        st.file_uploader("Upload Resume (PDF)", type="pdf")
