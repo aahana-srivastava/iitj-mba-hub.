@@ -1,40 +1,38 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-import requests
-from datetime import datetime
+import os
 
-# 1. Error-Proof Import for Resume Analysis
-try:
-    import PyPDF2
-    PDF_SUPPORT = True
-except ImportError:
-    PDF_SUPPORT = False
-
-# Database Initialization
+# Database Initialization with Auto-Fix for columns
 def init_db():
     conn = sqlite3.connect('opportunities.db')
     c = conn.cursor()
+    # Create the basic table
     c.execute('''CREATE TABLE IF NOT EXISTS opps 
                  (id INTEGER PRIMARY KEY, title TEXT, org TEXT, 
-                  deadline TEXT, link TEXT, status TEXT, category TEXT, description TEXT)''')
+                  deadline TEXT, link TEXT, status TEXT, category TEXT)''')
+    
+    # AUTO-FIX: Check if 'description' column exists, if not, add it
+    c.execute("PRAGMA table_info(opps)")
+    columns = [column[1] for column in c.fetchall()]
+    if 'description' not in columns:
+        c.execute("ALTER TABLE opps ADD COLUMN description TEXT")
+        
     conn.commit()
     conn.close()
 
-# 2. THE SCRAPER ENGINE (Simplified version for MBA Ops)
 def run_web_scraper():
-    """Scrapes dummy/mock data for now - Can be expanded with Scraper APIs"""
+    """Injects real sample data into the dashboard"""
     scraped_data = [
-        {"title": "HUL LIME 2025", "org": "HUL", "deadline": "2025-02-15", "link": "https://unstop.com", "cat": "Case Comp", "desc": "Open to Tier 1 B-Schools"},
-        {"title": "KPMG Strategy Consultant Live Project", "org": "KPMG", "deadline": "2025-01-20", "link": "https://kpmg.com", "cat": "Live Project", "desc": "Looking for MBA Interns"},
-        {"title": "Google Project Management Certification", "org": "Coursera/Google", "deadline": "2025-12-31", "link": "https://coursera.org", "cat": "Certification", "desc": "Free via IITJ Portal"},
-        {"title": "Amazon ACE 2025", "org": "Amazon", "deadline": "2025-03-01", "link": "https://unstop.com", "cat": "Case Comp", "desc": "Open for all MBAs"}
+        {"title": "HUL LIME Season 16", "org": "Hindustan Unilever", "deadline": "2025-02-15", "link": "https://unstop.com", "cat": "Case Comp", "desc": "Premium case competition for MBA students."},
+        {"title": "KPMG Strategy Consultant", "org": "KPMG India", "deadline": "2025-01-20", "link": "https://kpmg.com", "cat": "Live Project", "desc": "2-month virtual live project."},
+        {"title": "Google PM Certification", "org": "Google", "deadline": "2025-12-31", "link": "https://coursera.org", "cat": "Certification", "desc": "Highly recommended for IITJ MBA product track."}
     ]
     
     conn = sqlite3.connect('opportunities.db')
     for item in scraped_data:
-        # Check if already exists to avoid duplicates
-        check = pd.read_sql_query(f"SELECT * FROM opps WHERE title = '{item['title']}'", conn)
+        # Check if exists by title to prevent duplicates
+        check = pd.read_sql_query("SELECT * FROM opps WHERE title = ?", conn, params=(item['title'],))
         if check.empty:
             c = conn.cursor()
             c.execute("INSERT INTO opps (title, org, deadline, link, status, category, description) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -42,21 +40,23 @@ def run_web_scraper():
     conn.commit()
     conn.close()
 
+# Run the DB fix every time app starts
 init_db()
 
 st.set_page_config(page_title="IITJ MBA Hub", layout="wide")
 
-# --- SIDEBAR: The Scraper Control ---
-st.sidebar.title("🛠️ Tools")
-if st.sidebar.button("🔍 Run Global Scraper"):
-    with st.spinner("Scanning Unstop, LinkedIn & Career Portals..."):
-        run_web_scraper()
-        st.sidebar.success("Scraper Finished! New items found.")
-
-# --- MAIN UI ---
 st.title("🎓 IIT Jodhpur MBA Opportunity Hub")
 
-tab1, tab2, tab3 = st.tabs(["✅ Eligible for IITJ", "❌ Not Eligible", "📄 Resume Analysis"])
+# SIDEBAR
+with st.sidebar:
+    st.header("Admin Tools")
+    if st.button("🔍 Run Web Scraper"):
+        with st.spinner("Finding opportunities..."):
+            run_web_scraper()
+            st.success("Database Updated!")
+
+# TABS
+tab1, tab2 = st.tabs(["✅ Eligible Opps", "❌ Not Eligible"])
 
 def get_data():
     conn = sqlite3.connect('opportunities.db')
@@ -71,18 +71,8 @@ with tab1:
     if not eligible.empty:
         for _, row in eligible.iterrows():
             with st.expander(f"{row['title']} - {row['org']}"):
-                st.write(f"**Category:** {row['category']} | **Deadline:** {row['deadline']}")
-                st.write(row['description'])
-                st.link_button("Apply Now", row['link'])
+                st.write(f"**Type:** {row['category']} | **Deadline:** {row['deadline']}")
+                st.write(row['description'] if row['description'] else "No description available.")
+                st.link_button("View/Apply", row['link'])
     else:
-        st.info("The feed is currently empty. Click 'Run Global Scraper' in the sidebar.")
-
-with tab2:
-    st.write("These opportunities were filtered out based on IIT Jodhpur eligibility rules.")
-
-with tab3:
-    if not PDF_SUPPORT:
-        st.error("Resume Analysis is offline. Please ensure 'PyPDF2' is in requirements.txt and wait for rebuild.")
-    else:
-        st.write("Upload your resume to see which open case competitions match your skills.")
-        st.file_uploader("Upload Resume (PDF)", type="pdf")
+        st.info("No data yet. Click the Scraper button in the sidebar.")
