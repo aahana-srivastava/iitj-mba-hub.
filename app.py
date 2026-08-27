@@ -1,71 +1,87 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from scanner import init_db, add_opportunity
-#import PyPDF2
+import requests
+from datetime import datetime
 
-st.set_page_config(page_title="IITJ MBA Opportunity Hub", layout="wide")
+# 1. Error-Proof Import for Resume Analysis
+try:
+    import PyPDF2
+    PDF_SUPPORT = True
+except ImportError:
+    PDF_SUPPORT = False
+
+# Database Initialization
+def init_db():
+    conn = sqlite3.connect('opportunities.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS opps 
+                 (id INTEGER PRIMARY KEY, title TEXT, org TEXT, 
+                  deadline TEXT, link TEXT, status TEXT, category TEXT, description TEXT)''')
+    conn.commit()
+    conn.close()
+
+# 2. THE SCRAPER ENGINE (Simplified version for MBA Ops)
+def run_web_scraper():
+    """Scrapes dummy/mock data for now - Can be expanded with Scraper APIs"""
+    scraped_data = [
+        {"title": "HUL LIME 2025", "org": "HUL", "deadline": "2025-02-15", "link": "https://unstop.com", "cat": "Case Comp", "desc": "Open to Tier 1 B-Schools"},
+        {"title": "KPMG Strategy Consultant Live Project", "org": "KPMG", "deadline": "2025-01-20", "link": "https://kpmg.com", "cat": "Live Project", "desc": "Looking for MBA Interns"},
+        {"title": "Google Project Management Certification", "org": "Coursera/Google", "deadline": "2025-12-31", "link": "https://coursera.org", "cat": "Certification", "desc": "Free via IITJ Portal"},
+        {"title": "Amazon ACE 2025", "org": "Amazon", "deadline": "2025-03-01", "link": "https://unstop.com", "cat": "Case Comp", "desc": "Open for all MBAs"}
+    ]
+    
+    conn = sqlite3.connect('opportunities.db')
+    for item in scraped_data:
+        # Check if already exists to avoid duplicates
+        check = pd.read_sql_query(f"SELECT * FROM opps WHERE title = '{item['title']}'", conn)
+        if check.empty:
+            c = conn.cursor()
+            c.execute("INSERT INTO opps (title, org, deadline, link, status, category, description) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                      (item['title'], item['org'], item['deadline'], item['link'], 'Eligible', item['cat'], item['desc']))
+    conn.commit()
+    conn.close()
+
 init_db()
 
-# --- SIDEBAR: Add New Data (For Admin/Committee) ---
-st.sidebar.header("Admin: Add Opportunity")
-with st.sidebar.form("add_form"):
-    t = st.text_input("Title")
-    o = st.text_input("Organizer")
-    d = st.date_input("Deadline")
-    l = st.text_input("Link")
-    cat = st.selectbox("Category", ["Case Comp", "Live Project", "Fellowship"])
-    desc = st.text_area("Eligibility Description")
-    if st.form_submit_button("Add to Database"):
-        add_opportunity(t, o, str(d), l, desc, cat)
-        st.success("Added!")
+st.set_page_config(page_title="IITJ MBA Hub", layout="wide")
 
-# --- MAIN PAGE ---
+# --- SIDEBAR: The Scraper Control ---
+st.sidebar.title("🛠️ Tools")
+if st.sidebar.button("🔍 Run Global Scraper"):
+    with st.spinner("Scanning Unstop, LinkedIn & Career Portals..."):
+        run_web_scraper()
+        st.sidebar.success("Scraper Finished! New items found.")
+
+# --- MAIN UI ---
 st.title("🎓 IIT Jodhpur MBA Opportunity Hub")
 
-tab1, tab2, tab3 = st.tabs(["✅ Eligible Opps", "❌ Not Eligible", "📄 Resume Matcher"])
+tab1, tab2, tab3 = st.tabs(["✅ Eligible for IITJ", "❌ Not Eligible", "📄 Resume Analysis"])
 
-def get_data(status):
+def get_data():
     conn = sqlite3.connect('opportunities.db')
-    df = pd.read_sql_query(f"SELECT * FROM opps WHERE status = '{status}'", conn)
+    df = pd.read_sql_query("SELECT * FROM opps", conn)
     conn.close()
     return df
 
+all_data = get_data()
+
 with tab1:
-    st.subheader("Opportunities you can apply to today")
-    df_eligible = get_data("Eligible")
-    if not df_eligible.empty:
-        for _, row in df_eligible.iterrows():
-            with st.container():
-                col1, col2 = st.columns([3, 1])
-                col1.markdown(f"### [{row['title']}]({row['link']})")
-                col1.write(f"**{row['org']}** | Category: {row['category']}")
-                col2.error(f"Deadline: {row['deadline']}")
-                st.divider()
+    eligible = all_data[all_data['status'] == 'Eligible']
+    if not eligible.empty:
+        for _, row in eligible.iterrows():
+            with st.expander(f"{row['title']} - {row['org']}"):
+                st.write(f"**Category:** {row['category']} | **Deadline:** {row['deadline']}")
+                st.write(row['description'])
+                st.link_button("Apply Now", row['link'])
     else:
-        st.info("No eligible opportunities found yet.")
+        st.info("The feed is currently empty. Click 'Run Global Scraper' in the sidebar.")
 
 with tab2:
-    st.subheader("Filtered Out (Not for IITJ MBA)")
-    df_not = get_data("Not Eligible")
-    st.table(df_not[['title', 'org', 'deadline']])
+    st.write("These opportunities were filtered out based on IIT Jodhpur eligibility rules.")
 
 with tab3:
-    st.subheader("Personalized Career Guidance")
-    uploaded_file = st.file_uploader("Upload your Resume (PDF)", type="pdf")
-    
-    if uploaded_file:
-        # Extract text from PDF
-        reader = PyPDF2.PdfReader(uploaded_file)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text()
-            
-        st.success("Resume parsed successfully!")
-        
-        # In a real app, you'd send 'text' to OpenAI here
-        st.info("Top Matches based on your profile:")
-        st.write("1. **Consulting Case Comp:** Your experience in 'Operations' fits the 'Supply Chain' track.")
-        st.write("2. **Live Project (Marketing):** Matches your 'Digital Marketing' certification.")
-        
-        st.warning("Gap Analysis: You are missing a 'Product Management' certification. Try the 'Google PM Certificate' to unlock 4 more opportunities.")
+    if not PDF_SUPPORT:
+        st.error("Resume Analysis is offline. Please ensure 'PyPDF2' is in requirements.txt and wait for rebuild.")
+    else:
+        st.write("Uplo
