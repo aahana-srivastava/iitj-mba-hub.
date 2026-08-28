@@ -1,4 +1,6 @@
 streamlit
 pandas
-playwright
+requests
 beautifulsoup4
+openai
+PyPDF2
