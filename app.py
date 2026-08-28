@@ -204,4 +204,7 @@ elif mode == "🛡️ Admin Scraper":
             li = st.text_input("Exact Enrollment URL")
             ct = st.selectbox("Category", ["Case Comp", "Live Project", "Certification"])
             if st.form_submit_button("Publish Locally"):
-                vault.insert_bulk([{"title":ti, "org":org, "deadline":"2026-12-31", "link":li, "category":ct, "platform":"IEC Internal", "description":"Link share
+                vault.insert_bulk([{"title":ti, "org":org, "deadline":"2026-12-31", "link":li, "category":ct, "platform":"IEC Internal", "description":"Link shared by industry engagement cell."}])
+                st.toast("Success")
+    else:
+        st.error("Admin Security Verification Required.")
