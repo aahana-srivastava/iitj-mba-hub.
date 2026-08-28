@@ -5,8 +5,13 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 
+try:
+    from bs4 import BeautifulSoup
+    BS4_AVAILABLE = True
+except ImportError:
+    BS4_AVAILABLE = False
 # --- CONFIG ---
-LAUNCH_DATE = datetime(2026, 8, 1).date()
+LAUNCH_DATE = datetime(2026, 7, 1).date()
 
 def init_db():
     conn = sqlite3.connect('opportunities.db')
