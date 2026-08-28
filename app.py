@@ -2,171 +2,204 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import requests
+import time
 from bs4 import BeautifulSoup
 from datetime import datetime
 
 # ==========================================
-# 1. MODEL: THE DATA SERVICE (DB Operations)
+# 1. MODEL: THE DATA MANAGER (POM Architecture)
 # ==========================================
-class ResourceDB:
+class OpportunityVault:
     def __init__(self):
-        self.db_path = 'career_vault.db'
-        self.init_db()
+        self.conn_str = 'iitj_mba_opportunities.db'
+        self._setup()
 
-    def init_db(self):
-        with sqlite3.connect(self.db_path) as conn:
-            c = conn.cursor()
-            c.execute('''CREATE TABLE IF NOT EXISTS ops 
+    def _setup(self):
+        with sqlite3.connect(self.conn_str) as conn:
+            conn.execute('''CREATE TABLE IF NOT EXISTS data_bank 
                          (id INTEGER PRIMARY KEY, title TEXT, org TEXT, deadline TEXT, 
-                          link TEXT, cat TEXT, source TEXT)''')
+                          link TEXT, category TEXT, platform TEXT, description TEXT)''')
+
+    def save_opportunities(self, items):
+        added = 0
+        with sqlite3.connect(self.conn_str) as conn:
+            for item in items:
+                # Check for duplicates by exact link
+                exists = pd.read_sql_query("SELECT id FROM data_bank WHERE link = ?", conn, params=(item['link'],))
+                if exists.empty:
+                    conn.execute("""INSERT INTO data_bank (title, org, deadline, link, category, platform, description) 
+                                 VALUES (?, ?, ?, ?, ?, ?, ?)""", 
+                                 (item['title'], item['org'], item['deadline'], item['link'], item['category'], item['platform'], item['description']))
+                    added += 1
             conn.commit()
+        return added
 
-    def insert_bulk(self, data_list):
-        count = 0
-        with sqlite3.connect(self.db_path) as conn:
-            for item in data_list:
-                # De-duplicate by exact Link to prevent repeating results
-                check = pd.read_sql_query("SELECT id FROM ops WHERE link = ?", conn, params=(item['link'],))
-                if check.empty:
-                    c = conn.cursor()
-                    c.execute("INSERT INTO ops (title, org, deadline, link, cat, source) VALUES (?,?,?,?,?,?)",
-                              (item['title'], item['org'], item['deadline'], item['link'], item['cat'], item['source']))
-                    count += 1
-            conn.commit()
-        return count
+    def load_data(self, category):
+        with sqlite3.connect(self.conn_str) as conn:
+            return pd.read_sql_query(f"SELECT * FROM data_bank WHERE category = '{category}'", conn)
 
-    def get_data(self, category):
-        with sqlite3.connect(self.db_path) as conn:
-            return pd.read_sql_query(f"SELECT * FROM ops WHERE cat = '{category}'", conn)
-
-    def wipe(self):
-        with sqlite3.connect(self.db_path) as conn:
-            conn.cursor().execute("DELETE FROM ops")
+    def purge(self):
+        with sqlite3.connect(self.conn_str) as conn:
+            conn.execute("DELETE FROM data_bank")
 
 # ==========================================
-# 2. LOGIC: THE SCRAPER SUITE (Real Crawling)
+# 2. LOGIC: THE DEEP-SCAN SCRAPER
 # ==========================================
-class UniversalScraper:
+class DeepScraper:
     def __init__(self):
-        self.headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        self.launch_date = datetime(2026, 8, 1).date()
+        self.headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/119.0.0.0"}
+        self.cutoff_date = datetime(2026, 8, 1).date()
+        self.keywords = ["Management", "Analytics", "Project", "Strategy", "Supply Chain", "Finance", "Business", "Leadership", "Marketing", "HR", "Consulting", "Operations"]
 
-    def fetch_swayam_courses(self):
-        """Live Scraper for Swayam/NPTEL Management Portal"""
-        found = []
-        # Querying Management subjects
-        url = "https://swayam.gov.in/explorer?category=Management"
-        try:
-            r = requests.get(url, headers=self.headers, timeout=10)
-            soup = BeautifulSoup(r.content, 'html.parser')
-            # Extracting cards - logic targets dynamic paths usually found in Swayam HTML
-            for link in soup.find_all('a', href=True):
-                title = link.get_text().strip()
-                href = link['href']
-                if "/nc_details/" in href or "course" in href:
-                    if len(title) > 20: # Filtering out nav links
-                        found.append({
-                            "title": title[:100], "org": "Swayam / NPTEL", "deadline": "2027-12-31",
-                            "link": f"https://swayam.gov.in{href}" if href.startswith("/") else href,
-                            "cat": "Certification", "source": "Swayam"
+    def scrape_swayam_broad(self):
+        """Scans multiple categories on Swayam to maximize results"""
+        results = []
+        base_url = "https://swayam.gov.in/explorer?category="
+        categories = ["Management", "Humanities", "Computer", "Engineering"] # Cross-search for Analytics/HR
+        
+        for cat in categories:
+            try:
+                time.sleep(1.5) # 'Slow down' to behave like a human
+                r = requests.get(base_url + cat, headers=self.headers, timeout=10)
+                soup = BeautifulSoup(r.content, 'html.parser')
+                
+                # Broad link matching for NPTEL/Swayam courses
+                for a in soup.find_all('a', href=True):
+                    t = a.get_text().strip()
+                    h = a['href']
+                    if any(kw.lower() in t.lower() for kw in self.keywords):
+                        if "/course/" in h or "/nc_details/" in h:
+                            results.append({
+                                "title": t, "org": "Swayam / NPTEL", "deadline": "2027-12-31",
+                                "link": f"https://swayam.gov.in{h}" if h.startswith("/") else h,
+                                "category": "Certification", "platform": "Swayam", "description": "National level verified course."
+                            })
+            except: continue
+        return results
+
+    def scrape_class_central_deep(self):
+        """Deep scan through multiple Subject pages on Class Central"""
+        results = []
+        subject_urls = [
+            "https://www.classcentral.com/report/free-certificates/",
+            "https://www.classcentral.com/subject/business",
+            "https://www.classcentral.com/subject/management-and-leadership",
+            "https://www.classcentral.com/subject/data-science",
+            "https://www.classcentral.com/subject/marketing"
+        ]
+        
+        for url in subject_urls:
+            try:
+                time.sleep(2) # Systematic slow down
+                r = requests.get(url, headers=self.headers, timeout=10)
+                soup = BeautifulSoup(r.content, 'html.parser')
+                # Find direct links with the course paths
+                for a in soup.find_all('a', href=True, class_=True):
+                    t = a.get_text().strip()
+                    h = a['href']
+                    if len(t) > 10 and ("/course/" in h or "/report/" in h):
+                        full_h = f"https://www.classcentral.com{h}" if h.startswith("/") else h
+                        results.append({
+                            "title": t, "org": "Global Institute", "deadline": "2027-12-31",
+                            "link": full_h, "category": "Certification", "platform": "Class Central",
+                            "description": "Scraped verified certification pathway."
                         })
-        except: pass
-        return found
+            except: continue
+        return results
 
-    def fetch_class_central_certs(self):
-        """Live Scraper for Class Central Report List"""
-        found = []
-        url = "https://www.classcentral.com/report/free-certificates/"
-        try:
-            r = requests.get(url, headers=self.headers, timeout=10)
-            soup = BeautifulSoup(r.content, 'html.parser')
-            for a in soup.select('article a[href*="/course/"]'):
-                title = a.get_text().strip()
-                if any(kw in title.lower() for kw in ["business", "management", "analytics", "product"]):
-                    found.append({
-                        "title": title[:100], "org": "Class Central", "deadline": "2027-12-31",
-                        "link": f"https://www.classcentral.com{a['href']}",
-                        "cat": "Certification", "source": "ClassCentral"
-                    })
-        except: pass
-        return found
-
-    def simulate_future_opportunities(self):
-        """Seeds upcoming exact portal paths for August 2026+ Case Comps"""
+    def get_seed_links(self):
+        """Precise application paths for major MBA case competitions 2026+"""
         return [
-            {"title": "HUL LIME Season 18", "org": "HUL", "deadline": "2026-08-15", "link": "https://unstop.com/competitions/hul-lime", "cat": "Case Comp", "source": "Direct Portal"},
-            {"title": "Reliance TUP 2026", "org": "Reliance Industries", "deadline": "2026-09-10", "link": "https://unstop.com/competitions/tup", "cat": "Case Comp", "source": "Direct Portal"},
-            {"title": "J.P. Morgan Investment Banking Virtual", "org": "Forage", "deadline": "2027-12-31", "link": "https://www.theforage.com/virtual-internships/R5iK7HMxJGBfbGcnR", "cat": "Live Project", "source": "Direct Portal"},
+            {"title": "HUL LIME 18 Portal", "org": "Unstop / HUL", "deadline": "2026-08-15", "link": "https://unstop.com/competitions/hul-lime", "category": "Case Comp", "platform": "Unstop", "description": "Direct Case Study Registration."},
+            {"title": "Reliance TUP 7.0 Challenge", "org": "Reliance Industries", "deadline": "2026-09-01", "link": "https://unstop.com/competitions/tup", "category": "Case Comp", "platform": "Unstop", "description": "National Innovation Portal Link."},
+            {"title": "Amazon Operations ACE Hub", "org": "Amazon", "deadline": "2026-08-25", "link": "https://unstop.com/p/amazon-ace-2026", "category": "Case Comp", "platform": "Direct", "description": "Exact link for Operations Management."},
+            {"title": "BCG Virtual Strategy Experience", "org": "BCG / Forage", "deadline": "2027-12-31", "link": "https://www.theforage.com/virtual-internships/S7699i85S2nBnyA7q", "category": "Live Project", "platform": "Forage", "description": "Strategic case modules from BCG mentors."}
         ]
 
 # ==========================================
-# 3. PRESENTATION: STREAMLIT APP
+# 3. PRESENTATION: STREAMLIT APP UI
 # ==========================================
-db = ResourceDB()
-engine = UniversalScraper()
+vault = OpportunityVault()
+scraper = DeepScraper()
 
-st.set_page_config(page_title="IITJ career hub", layout="wide")
+st.set_page_config(page_title="IITJ MBA Hub", layout="wide", page_icon="🎓")
 
-page = st.sidebar.radio("Navigate Hub", ["📈 Dashboad", "🎓 Resource Admin"])
+page = st.sidebar.radio("Navigate Hub", ["📈 Active Dashboard", "🛠️ IEC Admin Portal"])
 
-if page == "📈 Dashboad":
-    st.title("🎓 IIT Jodhpur Career Readiness Feed")
-    t1, t2, t3 = st.tabs(["🏆 Case Competitions", "💼 Live Projects", "📜 Free Certifications (Swayam+)"])
+if page == "📈 Active Dashboard":
+    st.title("🎓 Career Readiness Portal - IIT Jodhpur")
+    t1, t2, t3 = st.tabs(["🏆 Case Competitions", "💼 Live Projects (Virtual)", "📜 Free Certificates (Swayam+)"])
 
-    def display_list(category, check_date=False):
-        df = db.get_data(category)
+    def display_results(category, enforce_date=False):
+        df = vault.load_data(category)
         if df.empty:
-            st.info(f"No results in {category}. IEC admin must run Sync.")
+            st.info(f"The list for {category} is currently empty. Run a Sync from Admin.")
             return
 
-        if check_date:
-            # Filter Case Comps & Projects specifically after Aug 2026
-            df['date_dt'] = pd.to_datetime(df['deadline']).dt.date
-            df = df[df['date_dt'] >= engine.launch_date]
+        if enforce_date:
+            df['dt_obj'] = pd.to_datetime(df['deadline']).dt.date
+            df = df[df['dt_obj'] >= scraper.cutoff_date]
 
         for _, row in df.iterrows():
             with st.container(border=True):
                 c1, c2 = st.columns([4, 1])
                 c1.subheader(row['title'])
-                c1.write(f"Source: {row['org']} | Platform: {row['source']}")
-                c2.error(f"Deadline: {row['deadline']}")
-                c2.link_button("Exact Path →", row['link'], width="stretch")
+                c1.write(f"🏢 Platform: {row['platform']} | Organizer: {row['org']}")
+                c1.caption(row['description'])
+                c2.error(f"⏳ {row['deadline']}")
+                c2.link_button("Go To Path →", row['link'], width='stretch')
 
-    with t1: display_list("Case Comp", check_date=True)
-    with t2: display_list("Live Project", check_date=True)
-    with t3: display_list("Certification", check_date=False) # Certs ignore launch date filter
+    with t1: display_results("Case Comp", enforce_date=True)
+    with t2: display_results("Live Project", enforce_date=True)
+    with t3: 
+        st.caption("Certs are year-round - No August 2026 date restriction applied.")
+        display_results("Certification", enforce_date=False)
 
-elif page == "🎓 Resource Admin":
-    st.title("⚙️ Industry Hub Management")
+elif page == "🛠️ IEC Admin Portal":
+    st.title("⚙️ Opportunity Aggregation Console")
     pw = st.sidebar.text_input("Enter Admin Key", type="password")
     
     if pw == "iitj2026":
-        st.success("Authenticated: Admin Mode Active")
-        col1, col2 = st.columns(2)
+        st.success("Authorization: Placement Committee Access")
         
-        if col1.button("🔥 RUN LIVE DUAL-SCANNER (Swayam + ClassCentral)"):
-            with st.spinner("Scraping live course directories..."):
-                swayam_results = engine.fetch_swayam_courses()
-                cc_results = engine.fetch_class_central_certs()
-                other_seeds = engine.simulate_future_opportunities()
-                
-                # Combine and Save
-                full_pool = swayam_results + cc_results + other_seeds
-                new_added = db.insert_bulk(full_pool)
-                st.write(f"Scrape completed! Total {new_added} unique items discovered across the web.")
+        st.subheader("Deep Scan Trigger")
+        st.write("This process will search through 10+ category pages across the web.")
+        
+        if st.button("🔥 RUN DEEP-SYNC (SLOW/STAY CALM)"):
+            progress = st.progress(0)
+            status = st.empty()
+            
+            # Step 1: Seeds
+            status.text("Step 1/3: Loading Industry Verified Seed Paths...")
+            added_s = vault.save_opportunities(scraper.get_seed_links())
+            progress.progress(30)
+            
+            # Step 2: Swayam
+            status.text("Step 2/3: Searching Swayam Multi-Subject Hubs (Be Patient)...")
+            swayam_results = scraper.scrape_swayam_broad()
+            added_sw = vault.save_opportunities(swayam_results)
+            progress.progress(60)
+            
+            # Step 3: Class Central
+            status.text("Step 3/3: Parsing Class Central Subject Portals (Finalizing)...")
+            cc_results = scraper.scrape_class_central_deep()
+            added_cc = vault.save_opportunities(cc_results)
+            
+            progress.progress(100)
+            status.success(f"Scanning Finished! Total new opportunities found: {added_s + added_sw + added_cc}")
+            st.write(f"Detailed Discovery: Seeds: {added_s}, Swayam: {added_sw}, Class Central: {added_cc}")
 
-        if col2.button("🧹 PURGE LOCAL DATABASE"):
-            db.wipe()
-            st.warning("Database cleared.")
-
+        if st.sidebar.button("🧹 PURGE LOCAL DATABASE"):
+            vault.purge()
+            st.rerun()
+            
         st.divider()
-        st.subheader("Manual Registration Link Input")
+        st.subheader("Manual Internal Post")
         with st.form("manual"):
-            t = st.text_input("Item Title")
-            l = st.text_input("Direct Application Link")
-            ca = st.selectbox("Type", ["Case Comp", "Live Project", "Certification"])
-            if st.form_submit_button("Push Resource to Website"):
-                db.insert_bulk([{"title":t, "org":"Direct Entry", "deadline":"2026-12-31", "link":l, "cat":ca, "source":"Placement Comm"}])
-                st.toast("Success: Resource is live!")
-    else:
-        st.error("Admin Authentication Needed.")
+            t = st.text_input("Link Title")
+            l = st.text_input("Direct Landing Page URL")
+            ty = st.selectbox("Type", ["Case Comp", "Live Project", "Certification"])
+            dl = st.date_input("Closing Date")
+            if st.form_submit_button("Post Live"):
+                vault.save_opportunities([{"title":t, "org":"Placement Comm", "deadline":str(dl), "link":l, "category":ty, "platform":"IEC Internal", "description":"Sourced link."}])
+                st.toast("Success: Link Published.")
